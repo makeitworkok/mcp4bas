@@ -1,41 +1,57 @@
-# MCP4BAS – Model Context Protocol for Building Automation Systems
+<a id="top"></a>
 
-An open-source MCP server that connects AI agents (Claude, etc.) to building automation networks.
+# MCP4BAS 🏢🤖
 
-🚧 **Work in Progress:** This project is actively being built — stay tuned for updates! 👀✨
+**MCP4BAS** helps AI assistants connect to building systems so teams can troubleshoot faster, operate smarter, and save energy. ⚡
 
-## Why?
+🚀 **Coming soon:** deeper BACnet support, early Modbus integrations, and smarter diagnostics workflows. [See planned features ↓](#planned-features)
 
-Building automation data is rich, but hard to access and act on quickly across fragmented tools and protocols.
+## Why this matters
 
-MCP4BAS aims to bridge that gap by exposing BAS context through a standard MCP interface so AI agents can safely assist with day-to-day operations.
+- 🧩 Building data is often scattered across tools and vendors
+- ⏱️ Troubleshooting takes too long when context is fragmented
+- 🌍 Better BAS visibility can improve comfort and reduce energy waste
 
-### Rationale
+## What MCP4BAS aims to do
 
-- 🧩 **Fragmented systems:** BAS teams often juggle BACnet/Modbus points, trend tools, schedules, and alarms across separate interfaces.
-- ⏱️ **Slow troubleshooting:** Root-cause analysis is time-consuming when technicians must manually gather point history and equipment context.
-- 🗣️ **Low accessibility:** Non-specialists struggle to query systems without deep BMS tool knowledge.
-- 🔁 **Reactive workflows:** Many sites still respond after comfort or energy issues occur instead of preventing them.
+- 🔌 Connect AI workflows to BAS protocols like BACnet and Modbus
+- 📡 Expand toward MQTT-based telemetry and edge integration workflows
+- 🏙️ Expand toward Niagara connectivity through Haystack-friendly integration
+- 🛠️ Expose safe, clear actions through MCP tools
+- 📈 Support better daily operations with reusable prompts and context
 
-### What this enables
+<a id="planned-features"></a>
 
-- ⚡ Faster diagnostics with natural-language queries over live and historical BAS data
-- 🌱 Better energy optimization through continuous, context-aware recommendations
-- 🛠️ More effective maintenance with earlier fault signals and clearer operator guidance
-- 🤖 Safer AI automation by routing actions through explicit tools, permissions, and audit-friendly interfaces
+## Planned features 🗺️
 
-## Planned Features
+- 🔎 Device discovery and point reads/writes for BACnet
+- 🔁 Early Modbus support for common field integrations
+- 📨 MQTT connector path for telemetry ingestion and controlled publish workflows
+- 🧷 Niagara connector path using Project Haystack conventions
+- 🧠 Reusable diagnostics prompts for comfort and energy issues
+- 📊 Trend-aware insights to help surface anomalies faster
+- 🔐 Permission-aware actions and audit-friendly control workflows
 
-- 🔌 BACnet and Modbus connectivity adapters
-- 📡 Real-time sensor/actuator read-write tools
-- 📈 Trend history access for analytics and insights
-- 🗓️ Schedule and setpoint management
-- 🔐 Secure auth and role-based access controls
+## MQTT caveat ⚠️
 
-## Contributing
+MQTT integrations are only as useful as their topic and payload standards. MCP4BAS will assume a defined topic convention and validated payload schema so points can be mapped reliably to site/equipment context. Therefore, MCP-side schema and quality checks for MQTT messages, with operator-visible caveats when context is incomplete.
 
-🤝 Contributions are welcome as this project evolves.
+## Niagara + Haystack caveat ⚠️
+
+Niagara/Haystack workflows assume your site has solid Haystack tagging in place. Point quality and diagnostics quality depend heavily on consistent, meaningful tags. MCP ingestion will include tag validation checks so missing/weak tags can be flagged early (instead of silently producing low-confidence results).
+
+[Back to top ↑](#top)
+
+## Current status 🚧
+
+MCP4BAS is in active development and already includes a working server foundation with early tool stubs. The next phase is deeper protocol integrations and production safety controls.
+
+## Get involved 🙌
 
 - ⭐ Star the project to follow progress
-- 🐛 Open an issue for bugs or feature ideas
-- 🔧 Submit a pull request when you’re ready
+- 💡 Open an issue with ideas or use cases
+- 🔧 Contribute with PRs as the roadmap grows
+
+## Looking for setup details?
+
+Technical notes, setup steps, project layout, and quickstart commands live in [NOTES.md](NOTES.md).
