@@ -1,0 +1,15 @@
+# Ignore everything by default
+*
+
+# Keep only Batch 1 publish set
+!README.md
+!LICENSE
+!.gitignore
+!pyproject.toml
+!requirements.txt
+!dev-requirements.txt
+!.env.example
+
+# Keep local/private docs out of publish batches
+TASKS.local.md
+NOTES.md
