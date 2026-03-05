@@ -23,6 +23,7 @@ dependencies = [
 bacnet = ["bacpypes3>=0.0.98"]
 modbus = ["pymodbus>=3.8.0"]
 mqtt = ["paho-mqtt>=2.1.0"]
+snmp = ["pysnmp>=4.4.12"]
 dashboard = [
   "fastapi>=0.115.0",
   "uvicorn>=0.30.0"

@@ -2,9 +2,9 @@
 
 # MCP4BAS 🏢🤖
 
-**MCP4BAS** helps AI assistants connect to building systems so teams can troubleshoot faster, operate smarter, and save energy. ⚡
+**MCP4BAS** is a Model Context Protocol (MCP) server for building automation workflows.
 
-🚀 **Coming soon:** deeper BACnet support, early Modbus integrations, and smarter diagnostics workflows. [See planned features ↓](#planned-features)
+It provides protocol-aware tools for BACnet, Modbus, Haystack, MQTT, and SNMP with safety controls for write operations.
 
 ## Why this matters
 
@@ -12,46 +12,89 @@
 - ⏱️ Troubleshooting takes too long when context is fragmented
 - 🌍 Better BAS visibility can improve comfort and reduce energy waste
 
-## What MCP4BAS aims to do
+## What MCP4BAS does now
 
-- 🔌 Connect AI workflows to BAS protocols like BACnet and Modbus
-- 📡 Expand toward MQTT-based telemetry and edge integration workflows
-- 🏙️ Expand toward Niagara connectivity through Haystack-friendly integration
-- 🛠️ Expose safe, clear actions through MCP tools
-- 📈 Support better daily operations with reusable prompts and context
+- 🔌 BACnet discovery, point reads/writes, trend/schedule retrieval, and IP adapter MAC lookup
+- 🔁 Modbus register reads and guarded write paths
+- 🏙️ Haystack point discovery + metadata fetch with tag quality scoring
+- 📨 MQTT telemetry ingest/query plus controlled publish with audit envelope
+- 🧪 SNMP read-only `get`, `walk`, and health summary tooling
+- 🔐 Global safety controls (`read-only`/`write-enabled`, dry-run, allowlists, audit metadata)
 
-<a id="planned-features"></a>
+## Tool surface (current)
 
-## Planned features 🗺️
+### BACnet
 
-- 🔎 Device discovery and point reads/writes for BACnet
-- 🔁 Early Modbus support for common field integrations
-- 📨 MQTT connector path for telemetry ingestion and controlled publish workflows
-- 🧷 Niagara connector path using Project Haystack conventions
-- 🧠 Reusable diagnostics prompts for comfort and energy issues
-- 📊 Trend-aware insights to help surface anomalies faster
-- 🔐 Permission-aware actions and audit-friendly control workflows
+- `who_is`
+- `read_property`
+- `write_property`
+- `bacnet_get_trend`
+- `bacnet_get_schedule`
+- `bacnet_get_ip_adapter_mac`
+
+### Modbus
+
+- `modbus_read_registers`
+- `modbus_write`
+
+### Haystack
+
+- `haystack_discover_points`
+- `haystack_get_point_metadata`
+
+### MQTT
+
+- `mqtt_ingest_message`
+- `mqtt_get_latest_points`
+- `mqtt_publish_message`
+
+### SNMP (read-only MVP)
+
+- `snmp_get`
+- `snmp_walk`
+- `snmp_device_health_summary`
+
+## Safety model
+
+- Default operation is read-only.
+- Writes require explicit write-enabled mode and per-protocol allowlists.
+- Dry-run mode validates and audits write requests without sending them.
+- Write responses include audit context (`mode`, `dry_run`, `allowed`, `reason`, `target`, `request`).
+
+## Quick start
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r dev-requirements.txt
+python -m mcp4bas.server --transport stdio
+```
+
+## Validation status
+
+- Automated quality pipeline is in place (`pytest`, `mypy`, `ruff`, CI workflow).
+- Live BACnet validation has been exercised for discovery, reads, controlled writes, priority write/relinquish, and rollback behavior.
+- Haystack and MQTT tool paths are validated with local datasets and integration tests.
+- SNMP read-only MVP is implemented with test coverage.
 
 ## MQTT caveat ⚠️
 
-MQTT integrations are only as useful as their topic and payload standards. MCP4BAS will assume a defined topic convention and validated payload schema so points can be mapped reliably to site/equipment context. Therefore, MCP-side schema and quality checks for MQTT messages, with operator-visible caveats when context is incomplete.
+MQTT quality depends on consistent topic and payload conventions. MCP4BAS validates topic/payload completeness and returns confidence/caveat metadata when context is weak.
 
 ## Niagara + Haystack caveat ⚠️
 
-Niagara/Haystack workflows assume your site has solid Haystack tagging in place. Point quality and diagnostics quality depend heavily on consistent, meaningful tags. MCP ingestion will include tag validation checks so missing/weak tags can be flagged early (instead of silently producing low-confidence results).
+Haystack workflows depend on tagging quality. Missing/weak/inconsistent tags reduce confidence and are surfaced in tool responses with remediation hints.
 
 [Back to top ↑](#top)
 
-## Current status 🚧
+## Roadmap
 
-MCP4BAS is in active development and already includes a working server foundation with early tool stubs. The next phase is deeper protocol integrations and production safety controls.
+- Expand live rollout coverage for Haystack and MQTT environments.
+- Extend SNMP validation against live devices.
+- Continue publish-batch hardening for public release cadence.
 
 ## Get involved 🙌
 
 - ⭐ Star the project to follow progress
 - 💡 Open an issue with ideas or use cases
 - 🔧 Contribute with PRs as the roadmap grows
-
-## Looking for setup details?
-
-Technical notes, setup steps, project layout, and quickstart commands live in [NOTES.md](NOTES.md).

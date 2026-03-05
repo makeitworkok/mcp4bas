@@ -1,0 +1,19 @@
+{
+  "resource": "trend_summary",
+  "version": "0.1",
+  "description": "Normalized trend summary schema for BAS diagnostics and anomaly review.",
+  "fields": [
+    "site_id",
+    "equipment_id",
+    "point_name",
+    "interval_start",
+    "interval_end",
+    "sample_count",
+    "min_value",
+    "max_value",
+    "avg_value",
+    "stddev_value",
+    "data_quality",
+    "alarm_events"
+  ]
+}

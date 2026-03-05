@@ -1,0 +1,13 @@
+{
+  "resource": "equipment_summary",
+  "version": "0.1",
+  "description": "Normalized equipment inventory summary schema used by diagnostics prompts.",
+  "fields": [
+    "equipment_id",
+    "zone",
+    "mode",
+    "supply_air_temp",
+    "setpoint",
+    "alarm_state"
+  ]
+}
