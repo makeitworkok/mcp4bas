@@ -2,6 +2,10 @@
 
 # MCP4BAS 🏢🤖
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python >=3.10](https://img.shields.io/badge/python-%3E%3D3.10-blue.svg)](pyproject.toml)
+[![Claude Code: Ready](https://img.shields.io/badge/Claude%20Code-Ready-7C3AED)](https://docs.anthropic.com/en/docs/claude-code/overview)
+
 **MCP4BAS** is a Model Context Protocol (MCP) server for building automation workflows.
 
 It provides protocol-aware tools for BACnet, Modbus, Haystack, MQTT, and SNMP with safety controls for write operations.
