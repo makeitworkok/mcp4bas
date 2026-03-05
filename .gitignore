@@ -13,6 +13,11 @@
 !.github/workflows/
 !.github/workflows/codeql.yml
 !.github/dependabot.yml
+!src/
+!src/mcp4bas/
+!src/mcp4bas/prompts/
+!src/mcp4bas/prompts/__init__.py
+!src/mcp4bas/prompts/*.md
 
 # Keep local/private docs out of publish batches
 TASKS.local.md
