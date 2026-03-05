@@ -1,0 +1,44 @@
+{
+  "good": [
+    {
+      "topic": "hq-east/ahu-1/zone-temp",
+      "payload": {
+        "value": 72.4,
+        "unit": "degF",
+        "timestamp": "2026-03-03T09:00:00Z",
+        "quality": "good",
+        "source": "fixture"
+      }
+    },
+    {
+      "topic": "hq-east/ahu-1/supply-fan-cmd",
+      "payload": {
+        "value": 1,
+        "timestamp": "2026-03-03T09:01:00Z",
+        "quality": "good",
+        "source": "fixture"
+      }
+    }
+  ],
+  "bad": [
+    {
+      "topic": "hq-east/ahu-1",
+      "payload": {
+        "value": 72.4,
+        "unit": "degF",
+        "quality": "good",
+        "source": "fixture"
+      }
+    },
+    {
+      "topic": "wrong-prefix/ahu-1/zone-temp",
+      "payload": {
+        "value": 72.4,
+        "unit": "degF",
+        "timestamp": "",
+        "quality": "bad",
+        "source": "fixture"
+      }
+    }
+  ]
+}

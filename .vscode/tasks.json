@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "lint:ruff",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "ruff", "check", "src", "tests"],
+      "problemMatcher": ["$eslint-stylish"],
+      "group": "test"
+    },
+    {
+      "label": "typecheck:mypy",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "mypy", "src"],
+      "problemMatcher": ["$msCompile"],
+      "group": "test"
+    },
+    {
+      "label": "quality:all",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "pytest", "-q"],
+      "problemMatcher": [],
+      "dependsOn": ["lint:ruff", "typecheck:mypy"],
+      "dependsOrder": "sequence",
+      "group": "test"
+    }
+  ]
+}
