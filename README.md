@@ -5,6 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python >=3.10](https://img.shields.io/badge/python-%3E%3D3.10-blue.svg)](pyproject.toml)
 [![Claude Code: Ready](https://img.shields.io/badge/Claude%20Code-Ready-7C3AED)](https://docs.anthropic.com/en/docs/claude-code/overview)
+[![Code Scanning](https://github.com/makeitworkok/mcp4bas/actions/workflows/codeql.yml/badge.svg)](https://github.com/makeitworkok/mcp4bas/security/code-scanning)
+[![Dependabot](https://img.shields.io/badge/dependabot-enabled-success)](https://github.com/makeitworkok/mcp4bas/network/updates)
+[![Secret Scanning](https://img.shields.io/badge/secret%20scanning-enabled-success)](https://github.com/makeitworkok/mcp4bas/security/secret-scanning)
 
 **MCP4BAS** is a Model Context Protocol (MCP) server for building automation workflows.
 

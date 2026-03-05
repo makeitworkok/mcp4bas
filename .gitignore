@@ -9,6 +9,10 @@
 !requirements.txt
 !dev-requirements.txt
 !.env.example
+!.github/
+!.github/workflows/
+!.github/workflows/codeql.yml
+!.github/dependabot.yml
 
 # Keep local/private docs out of publish batches
 TASKS.local.md
