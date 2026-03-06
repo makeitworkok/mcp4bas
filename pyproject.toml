@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp4bas"
-version = "0.1.0"
-description = "Model Context Protocol server for Building Automation Systems"
+version = "0.2.0"
+description = "MCP4BAS orchestrator — routes building automation tool calls to specialist sibling MCP servers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -14,22 +14,13 @@ authors = [
 ]
 dependencies = [
   "mcp[cli]>=1.26.0",
-  "bacpypes3>=0.0.98",
-  "pymodbus>=3.8.0",
   "pydantic>=2.9.0"
 ]
 
 [project.optional-dependencies]
-bacnet = ["bacpypes3>=0.0.98"]
-modbus = ["pymodbus>=3.8.0"]
-mqtt = ["paho-mqtt>=2.1.0"]
-snmp = ["pysnmp>=4.4.12"]
-dashboard = [
-  "fastapi>=0.115.0",
-  "uvicorn>=0.30.0"
-]
 dev = [
   "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
   "ruff>=0.6.0",
   "mypy>=1.11.0"
 ]
@@ -43,6 +34,7 @@ packages = ["src/mcp4bas"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
