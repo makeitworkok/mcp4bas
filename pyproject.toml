@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 monitoring = ["netifaces>=0.11.0"]
+bacnet = ["bacpypes3>=0.0.100"]
 dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.24.0",
@@ -28,9 +29,10 @@ dev = [
 
 [project.scripts]
 mcp4bas = "mcp4bas.server:main"
+mcp4bacnet = "mcp4bacnet.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mcp4bas"]
+packages = ["src/mcp4bas", "src/mcp4bacnet"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
