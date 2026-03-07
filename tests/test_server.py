@@ -18,7 +18,11 @@ def test_get_network_context_returns_ok() -> None:
     assert "message" in result
 
 
-def test_get_network_context_primary_field() -> None:
+def test_get_network_context_discovery_field() -> None:
     result = get_network_context()
-    # primary may be None in some CI environments, but the key must exist
-    assert "primary" in result
+    assert "discovery" in result
+    d = result["discovery"]
+    assert "subnet" in d
+    assert "gateway" in d
+    assert "status" in d
+    assert d["status"] in ("known", "new")

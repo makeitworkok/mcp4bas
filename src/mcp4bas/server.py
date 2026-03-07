@@ -1,21 +1,30 @@
 """MCP4BAS Orchestrator Server.
 
 Starts the mcp4bas orchestrator, which:
-  1. Discovers the local network context ("where am I?")
-  2. Spawns configured sibling MCP servers as stdio subprocesses
-  3. Proxies all sibling tools through this single MCP connection
-  4. Exposes its own ``get_network_context`` tool
+  1. Performs full network discovery at startup ("where am I?")
+     -- detects IP, subnet, gateway; pings gateway; falls back to nmap if needed
+  2. Caches the network result to ~/.mcp4bas/network_cache.json
+  3. Spawns configured sibling MCP servers as stdio subprocesses
+  4. Proxies all sibling tools through this single MCP connection
+  5. Watches for subnet changes every 10 min; auto-restarts BACnet sibling on change
+  6. Exposes a get_network_context tool that always returns live network state
 
-Configure siblings via environment variables::
+Configure siblings via environment variables:
 
     MCP4BAS_SIBLING_BACNET="python -m mcp4bacnet"
     MCP4BAS_SIBLING_MODBUS="python -m mcp4modbus"
 
-See ``src/mcp4bas/config.py`` for full configuration reference.
+Other environment variables:
+
+    MCP4BAS_VERBOSE=1            Enable verbose probe/cache logging
+    MCP4BAS_NETWORK_CACHE=<path> Override network cache file path
+
+See src/mcp4bas/config.py for full configuration reference.
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib
 import logging
 import sys
@@ -23,7 +32,14 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 
 from mcp4bas.config import OrchestratorConfig
-from mcp4bas.network import discover_network_context, select_primary_interface
+from mcp4bas.network import (
+    NetworkDiscovery,
+    NetworkWatcher,
+    _VERBOSE as _NET_VERBOSE,
+    discover_network,
+    discover_network_context,
+    startup_network_check,
+)
 from mcp4bas.proxy import OrchestratorProxy
 
 
@@ -49,42 +65,70 @@ _LOGGER.propagate = False
 
 FastMCP = _resolve_fastmcp()
 
-# Module-level proxy holder — populated during lifespan startup
+# Module-level state -- populated during lifespan startup
 _proxy: OrchestratorProxy | None = None
+_watcher: NetworkWatcher | None = None
+_verbose: bool = _NET_VERBOSE
 
 
 @asynccontextmanager
 async def _lifespan(server: Any) -> AsyncGenerator[None, None]:
     """Orchestrator startup: discover network, spawn siblings, register tools."""
-    global _proxy
+    global _proxy, _watcher
 
-    # Step 1: Discover network context
-    contexts = discover_network_context()
-    primary = select_primary_interface(contexts)
+    # Step 1 -- network discovery (cache-aware, gateway probe, nmap fallback)
+    discovery = startup_network_check(verbose=_verbose)
 
-    if primary:
-        _LOGGER.info(
-            "network_context ip=%s cidr=%s iface=%s",
-            primary.ip_address,
-            primary.cidr,
-            primary.interface,
+    _LOGGER.info(
+        "network_context ip=%s subnet=%s gateway=%s iface=%s status=%s fallback=%s",
+        discovery.ip_address,
+        discovery.subnet,
+        discovery.gateway,
+        discovery.interface,
+        discovery.status,
+        discovery.fallback_used,
+    )
+
+    if discovery.fallback_used:
+        _LOGGER.warning(
+            "network_fallback_active -- BACnet broadcasts may not reach devices. "
+            "Set MCP4BAS_SIBLING_BACNET and verify network connectivity."
         )
-    else:
-        _LOGGER.warning("network_context could not be determined")
 
-    # Step 2: Load sibling config and start proxy
+    # Step 2 -- load sibling config and start proxy
     config = OrchestratorConfig.from_env()
 
     if not config.siblings:
         _LOGGER.info(
-            "no_siblings_configured — set MCP4BAS_SIBLING_<NAME>=<command> to add servers"
+            "no_siblings_configured -- set MCP4BAS_SIBLING_<NAME>=<command> to add servers"
         )
 
-    proxy = OrchestratorProxy(config, primary)
+    proxy = OrchestratorProxy(config, discovery)
     discovered_tools = await proxy.start()
     _proxy = proxy
 
-    # Step 3: Dynamically register proxy tools on this FastMCP instance
+    # Step 3 -- subnet change watcher (restarts BACnet sibling on network move)
+    async def _on_network_change(new_discovery: NetworkDiscovery) -> None:
+        _LOGGER.warning(
+            "subnet_changed old=%s new=%s gateway=%s -- restarting BACnet sibling",
+            discovery.subnet,
+            new_discovery.subnet,
+            new_discovery.gateway,
+        )
+        if _proxy is not None:
+            ok = await _proxy.restart_sibling("bacnet", new_discovery)
+            if ok:
+                _LOGGER.info("bacnet_sibling_restarted subnet=%s", new_discovery.subnet)
+            else:
+                _LOGGER.error(
+                    "bacnet_sibling_restart_failed -- BACnet may be unreachable on new subnet"
+                )
+
+    watcher = NetworkWatcher(interval_sec=600, on_change=_on_network_change)
+    await watcher.start()
+    _watcher = watcher
+
+    # Step 4 -- register proxy tools dynamically
     for tool in discovered_tools:
         tool_name = tool.name
         tool_description = tool.description or tool_name
@@ -110,6 +154,8 @@ async def _lifespan(server: Any) -> AsyncGenerator[None, None]:
     yield  # Server is live
 
     # Shutdown
+    await watcher.stop()
+    _watcher = None
     await proxy.stop()
     _proxy = None
 
@@ -119,27 +165,35 @@ mcp = FastMCP(
     instructions=(
         "MCP4BAS orchestrator. Routes building automation protocol tool calls "
         "to specialist sibling MCP servers (BACnet, Modbus, MQTT, Haystack, SNMP). "
-        "Use get_network_context to inspect the server's network position."
+        "Use get_network_context to inspect the server live network position "
+        "including subnet, gateway, and whether a fallback is active."
     ),
     lifespan=_lifespan,
 )
 
 
-@mcp.tool(description="Return the network interfaces discovered on this machine at startup")
+@mcp.tool(
+    description=(
+        "Return live network context for this machine -- subnet, gateway, interface, "
+        "status (known/new), and whether the fallback subnet is active. "
+        "Always reflects current state; re-runs discovery on each call."
+    )
+)
 def get_network_context() -> dict[str, Any]:
-    """Report the local network context used to configure sibling servers."""
+    """Report the live network context.  Re-runs discovery on each invocation."""
     _LOGGER.info("tool=get_network_context")
+    discovery = discover_network(verbose=_verbose)
     contexts = discover_network_context()
-    primary = select_primary_interface(contexts)
     return {
         "status": "ok",
         "tool": "get_network_context",
-        "primary": primary.as_dict() if primary else None,
+        "discovery": discovery.as_dict(),
         "all_interfaces": [ctx.as_dict() for ctx in contexts],
         "message": (
-            f"Found {len(contexts)} interface(s). "
-            f"Primary: {primary.ip_address if primary else 'none'} "
-            f"({primary.cidr if primary else 'unknown'})."
+            f"Subnet: {discovery.subnet} | "
+            f"Gateway: {discovery.gateway or 'unknown'} | "
+            f"Status: {discovery.status} | "
+            f"Fallback: {discovery.fallback_used}"
         ),
     }
 
@@ -163,13 +217,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Deprecated alias for --transport stdio",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose network probe and cache logging",
+    )
     return parser
 
 
 def main() -> int:
+    global _verbose
     args = build_arg_parser().parse_args()
     transport = "stdio" if args.stdio else args.transport
-    _LOGGER.info("starting_server transport=%s", transport)
+    if args.verbose:
+        _verbose = True
+        logging.getLogger("mcp4bas.network").setLevel(logging.DEBUG)
+    _LOGGER.info("starting_server transport=%s verbose=%s", transport, _verbose)
     server = create_mcp_server()
     server.run(transport=transport)
     return 0
