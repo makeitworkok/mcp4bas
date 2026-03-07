@@ -1,12 +1,46 @@
+"""MCP4BAS Orchestrator Server.
+
+Starts the mcp4bas orchestrator, which:
+  1. Performs full network discovery at startup ("where am I?")
+     -- detects IP, subnet, gateway; pings gateway; falls back to nmap if needed
+  2. Caches the network result to ~/.mcp4bas/network_cache.json
+  3. Spawns configured sibling MCP servers as stdio subprocesses
+  4. Proxies all sibling tools through this single MCP connection
+  5. Watches for subnet changes every 10 min; auto-restarts BACnet sibling on change
+  6. Exposes a get_network_context tool that always returns live network state
+
+Configure siblings via environment variables:
+
+    MCP4BAS_SIBLING_BACNET="python -m mcp4bacnet"
+    MCP4BAS_SIBLING_MODBUS="python -m mcp4modbus"
+
+Other environment variables:
+
+    MCP4BAS_VERBOSE=1            Enable verbose probe/cache logging
+    MCP4BAS_NETWORK_CACHE=<path> Override network cache file path
+
+See src/mcp4bas/config.py for full configuration reference.
+"""
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib
 import logging
 import sys
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator
 
-from mcp4bas.tools.core import default_registry
+from mcp4bas.config import OrchestratorConfig
+from mcp4bas.network import (
+    NetworkDiscovery,
+    NetworkWatcher,
+    _VERBOSE as _NET_VERBOSE,
+    discover_network,
+    discover_network_context,
+    startup_network_check,
+)
+from mcp4bas.proxy import OrchestratorProxy
 
 
 def _resolve_fastmcp() -> type:
@@ -17,13 +51,9 @@ def _resolve_fastmcp() -> type:
         except (ModuleNotFoundError, AttributeError):
             continue
     raise RuntimeError(
-        "FastMCP is not available. Install dependencies with `pip install -r dev-requirements.txt`."
+        "FastMCP is not available. Install with `pip install mcp[cli]`."
     )
 
-
-FastMCP = _resolve_fastmcp()
-
-_REGISTRY = default_registry()
 
 _LOGGER = logging.getLogger("mcp4bas.server")
 if not _LOGGER.handlers:
@@ -33,241 +63,139 @@ if not _LOGGER.handlers:
 _LOGGER.setLevel(logging.INFO)
 _LOGGER.propagate = False
 
-mcp = FastMCP("mcp4bas", instructions="MCP server for BAS operations.")
+FastMCP = _resolve_fastmcp()
+
+# Module-level state -- populated during lifespan startup
+_proxy: OrchestratorProxy | None = None
+_watcher: NetworkWatcher | None = None
+_verbose: bool = _NET_VERBOSE
 
 
-@mcp.tool(description="Discover BACnet devices on network")
-def who_is() -> dict[str, Any]:
-    _LOGGER.info("tool=who_is request={}")
-    return _REGISTRY.call(name="who_is", arguments={})
+@asynccontextmanager
+async def _lifespan(server: Any) -> AsyncGenerator[None, None]:
+    """Orchestrator startup: discover network, spawn siblings, register tools."""
+    global _proxy, _watcher
 
+    # Step 1 -- network discovery (cache-aware, gateway probe, nmap fallback)
+    discovery = startup_network_check(verbose=_verbose)
 
-@mcp.tool(description="Read a BACnet object property")
-def read_property(object_id: str, property: str = "present-value") -> dict[str, Any]:
     _LOGGER.info(
-        "tool=read_property request=%s",
-        {"object_id": object_id, "property": property},
-    )
-    return _REGISTRY.call(
-        name="read_property",
-        arguments={"object_id": object_id, "property": property},
-    )
-
-
-@mcp.tool(description="Write a BACnet object property")
-def write_property(
-    object_id: str,
-    property: str,
-    value: str | float | int,
-    priority: int | None = None,
-) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=write_property request=%s",
-        {"object_id": object_id, "property": property, "value": value, "priority": priority},
-    )
-    return _REGISTRY.call(
-        name="write_property",
-        arguments={
-            "object_id": object_id,
-            "property": property,
-            "value": value,
-            "priority": priority,
-        },
+        "network_context ip=%s subnet=%s gateway=%s iface=%s status=%s fallback=%s",
+        discovery.ip_address,
+        discovery.subnet,
+        discovery.gateway,
+        discovery.interface,
+        discovery.status,
+        discovery.fallback_used,
     )
 
+    if discovery.fallback_used:
+        _LOGGER.warning(
+            "network_fallback_active -- BACnet broadcasts may not reach devices. "
+            "Set MCP4BAS_SIBLING_BACNET and verify network connectivity."
+        )
 
-@mcp.tool(description="Read BACnet trend log entries with optional window and fallback")
-def bacnet_get_trend(
-    trend_object_id: str,
-    limit: int = 100,
-    window_minutes: int | None = None,
-    source_object_id: str | None = None,
-    source_property: str = "present-value",
-) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=bacnet_get_trend request=%s",
-        {
-            "trend_object_id": trend_object_id,
-            "limit": limit,
-            "window_minutes": window_minutes,
-            "source_object_id": source_object_id,
-            "source_property": source_property,
-        },
-    )
-    return _REGISTRY.call(
-        name="bacnet_get_trend",
-        arguments={
-            "trend_object_id": trend_object_id,
-            "limit": limit,
-            "window_minutes": window_minutes,
-            "source_object_id": source_object_id,
-            "source_property": source_property,
-        },
-    )
+    # Step 2 -- load sibling config and start proxy
+    config = OrchestratorConfig.from_env()
 
+    if not config.siblings:
+        _LOGGER.info(
+            "no_siblings_configured -- set MCP4BAS_SIBLING_<NAME>=<command> to add servers"
+        )
 
-@mcp.tool(description="Read BACnet weekly and exception schedules")
-def bacnet_get_schedule(schedule_object_id: str) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=bacnet_get_schedule request=%s",
-        {"schedule_object_id": schedule_object_id},
-    )
-    return _REGISTRY.call(
-        name="bacnet_get_schedule",
-        arguments={"schedule_object_id": schedule_object_id},
-    )
+    proxy = OrchestratorProxy(config, discovery)
+    discovered_tools = await proxy.start()
+    _proxy = proxy
 
+    # Step 3 -- subnet change watcher (restarts BACnet sibling on network move)
+    async def _on_network_change(new_discovery: NetworkDiscovery) -> None:
+        _LOGGER.warning(
+            "subnet_changed old=%s new=%s gateway=%s -- restarting BACnet sibling",
+            discovery.subnet,
+            new_discovery.subnet,
+            new_discovery.gateway,
+        )
+        if _proxy is not None:
+            ok = await _proxy.restart_sibling("bacnet", new_discovery)
+            if ok:
+                _LOGGER.info("bacnet_sibling_restarted subnet=%s", new_discovery.subnet)
+            else:
+                _LOGGER.error(
+                    "bacnet_sibling_restart_failed -- BACnet may be unreachable on new subnet"
+                )
 
-@mcp.tool(description="Resolve adapter MAC address for an IP-connected BAS target")
-def bacnet_get_ip_adapter_mac(
-    ip_address: str | None = None,
-    target_address: str | None = None,
-    probe: bool = True,
-) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=bacnet_get_ip_adapter_mac request=%s",
-        {
-            "ip_address": ip_address,
-            "target_address": target_address,
-            "probe": probe,
-        },
-    )
-    return _REGISTRY.call(
-        name="bacnet_get_ip_adapter_mac",
-        arguments={
-            "ip_address": ip_address,
-            "target_address": target_address,
-            "probe": probe,
-        },
-    )
+    watcher = NetworkWatcher(interval_sec=600, on_change=_on_network_change)
+    await watcher.start()
+    _watcher = watcher
 
+    # Step 4 -- register proxy tools dynamically
+    for tool in discovered_tools:
+        tool_name = tool.name
+        tool_description = tool.description or tool_name
 
-@mcp.tool(description="Read Modbus holding or input registers")
-def modbus_read_registers(
-    register_type: str,
-    address: int,
-    count: int = 1,
-) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=modbus_read_registers request=%s",
-        {"register_type": register_type, "address": address, "count": count},
-    )
-    return _REGISTRY.call(
-        name="modbus_read_registers",
-        arguments={"register_type": register_type, "address": address, "count": count},
-    )
+        def _make_handler(name: str):
+            async def _handler(**kwargs: Any) -> dict[str, Any]:
+                if _proxy is None:
+                    return {"status": "error", "message": "Proxy not initialized"}
+                return await _proxy.call_tool(name, kwargs)
+
+            _handler.__name__ = name
+            _handler.__doc__ = tool_description
+            return _handler
+
+        server.add_tool(
+            _make_handler(tool_name),
+            name=tool_name,
+            description=tool_description,
+        )
+
+    _LOGGER.info("orchestrator_ready tools=%d", len(discovered_tools))
+
+    yield  # Server is live
+
+    # Shutdown
+    await watcher.stop()
+    _watcher = None
+    await proxy.stop()
+    _proxy = None
 
 
-@mcp.tool(description="Write Modbus register or coil")
-def modbus_write(
-    write_type: str,
-    address: int,
-    value: int | bool,
-) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=modbus_write request=%s",
-        {"write_type": write_type, "address": address, "value": value},
-    )
-    return _REGISTRY.call(
-        name="modbus_write",
-        arguments={"write_type": write_type, "address": address, "value": value},
-    )
+mcp = FastMCP(
+    "mcp4bas",
+    instructions=(
+        "MCP4BAS orchestrator. Routes building automation protocol tool calls "
+        "to specialist sibling MCP servers (BACnet, Modbus, MQTT, Haystack, SNMP). "
+        "Use get_network_context to inspect the server live network position "
+        "including subnet, gateway, and whether a fallback is active."
+    ),
+    lifespan=_lifespan,
+)
 
 
-@mcp.tool(description="Discover Haystack points (dataset/API) with tag validation")
-def haystack_discover_points(limit: int = 100) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=haystack_discover_points request=%s",
-        {"limit": limit},
+@mcp.tool(
+    description=(
+        "Return live network context for this machine -- subnet, gateway, interface, "
+        "status (known/new), and whether the fallback subnet is active. "
+        "Always reflects current state; re-runs discovery on each call."
     )
-    return _REGISTRY.call(
-        name="haystack_discover_points",
-        arguments={"limit": limit},
-    )
-
-
-@mcp.tool(description="Fetch Haystack point metadata with tag validation output")
-def haystack_get_point_metadata(point_id: str) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=haystack_get_point_metadata request=%s",
-        {"point_id": point_id},
-    )
-    return _REGISTRY.call(
-        name="haystack_get_point_metadata",
-        arguments={"point_id": point_id},
-    )
-
-
-@mcp.tool(description="Ingest MQTT telemetry payload for normalization and validation")
-def mqtt_ingest_message(topic: str, payload: dict[str, Any], source: str = "manual") -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=mqtt_ingest_message request=%s",
-        {"topic": topic, "source": source},
-    )
-    return _REGISTRY.call(
-        name="mqtt_ingest_message",
-        arguments={"topic": topic, "payload": payload, "source": source},
-    )
-
-
-@mcp.tool(description="Get latest normalized MQTT telemetry points")
-def mqtt_get_latest_points(site: str | None = None, equip: str | None = None, limit: int = 100) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=mqtt_get_latest_points request=%s",
-        {"site": site, "equip": equip, "limit": limit},
-    )
-    return _REGISTRY.call(
-        name="mqtt_get_latest_points",
-        arguments={"site": site, "equip": equip, "limit": limit},
-    )
-
-
-@mcp.tool(description="Publish MQTT payload with write safety controls")
-def mqtt_publish_message(topic: str, payload: dict[str, Any], source: str = "mcp_tool") -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=mqtt_publish_message request=%s",
-        {"topic": topic, "source": source},
-    )
-    return _REGISTRY.call(
-        name="mqtt_publish_message",
-        arguments={"topic": topic, "payload": payload, "source": source},
-    )
-
-
-@mcp.tool(description="Read a single SNMP OID from target host")
-def snmp_get(oid: str, host: str | None = None) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=snmp_get request=%s",
-        {"oid": oid, "host": host},
-    )
-    return _REGISTRY.call(
-        name="snmp_get",
-        arguments={"oid": oid, "host": host},
-    )
-
-
-@mcp.tool(description="Read SNMP OID subtree entries with output limit")
-def snmp_walk(oid_prefix: str, host: str | None = None, limit: int = 100) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=snmp_walk request=%s",
-        {"oid_prefix": oid_prefix, "host": host, "limit": limit},
-    )
-    return _REGISTRY.call(
-        name="snmp_walk",
-        arguments={"oid_prefix": oid_prefix, "host": host, "limit": limit},
-    )
-
-
-@mcp.tool(description="Summarize SNMP device uptime and interface health")
-def snmp_device_health_summary(host: str | None = None, interface_limit: int = 20) -> dict[str, Any]:
-    _LOGGER.info(
-        "tool=snmp_device_health_summary request=%s",
-        {"host": host, "interface_limit": interface_limit},
-    )
-    return _REGISTRY.call(
-        name="snmp_device_health_summary",
-        arguments={"host": host, "interface_limit": interface_limit},
-    )
+)
+def get_network_context() -> dict[str, Any]:
+    """Report the live network context.  Re-runs discovery on each invocation."""
+    _LOGGER.info("tool=get_network_context")
+    discovery = discover_network(verbose=_verbose)
+    contexts = discover_network_context()
+    return {
+        "status": "ok",
+        "tool": "get_network_context",
+        "discovery": discovery.as_dict(),
+        "all_interfaces": [ctx.as_dict() for ctx in contexts],
+        "message": (
+            f"Subnet: {discovery.subnet} | "
+            f"Gateway: {discovery.gateway or 'unknown'} | "
+            f"Status: {discovery.status} | "
+            f"Fallback: {discovery.fallback_used}"
+        ),
+    }
 
 
 def create_mcp_server() -> Any:
@@ -275,7 +203,9 @@ def create_mcp_server() -> Any:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run MCP4BAS using the official FastMCP server.")
+    parser = argparse.ArgumentParser(
+        description="Run MCP4BAS orchestrator using FastMCP."
+    )
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http", "sse"],
@@ -287,13 +217,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Deprecated alias for --transport stdio",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose network probe and cache logging",
+    )
     return parser
 
 
 def main() -> int:
+    global _verbose
     args = build_arg_parser().parse_args()
     transport = "stdio" if args.stdio else args.transport
-    _LOGGER.info("starting_server transport=%s", transport)
+    if args.verbose:
+        _verbose = True
+        logging.getLogger("mcp4bas.network").setLevel(logging.DEBUG)
+    _LOGGER.info("starting_server transport=%s verbose=%s", transport, _verbose)
     server = create_mcp_server()
     server.run(transport=transport)
     return 0
